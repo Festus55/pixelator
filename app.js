@@ -363,6 +363,10 @@ function reset() {
   ditherStrengthValue.textContent = "50";
   updateDitherControlsEnabled();
   dropZone.focus();
+
+  pixelSizeInput.max = BASE_MAX;
+  keepAlphaToggle.checked = false;
+  keepAlphaToggle.disabled = true;
 }
 
 // --- Status messages ----------------------------------------------------
