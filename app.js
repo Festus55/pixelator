@@ -218,14 +218,15 @@ function computeBlockAverages(imageData, width, height, blocksX, blocksY) {
 function finalizeAlpha(imageData, keepAlpha) {
   const d = imageData.data;
   for (let i = 0; i < d.length; i += 4) {
-    const a = d[i + 3];
+    const opaque = d[i + 3] >= ALPHA_THRESHOLD;
     if (keepAlpha) {
-      d[i + 3] = a >= ALPHA_THRESHOLD ? 255 : 0;
+      d[i + 3] = opaque ? 255 : 0;
     } else {
-      const t = a / 255;
-      d[i] = Math.round(d[i] * t + 255 * (1 - t));
-      d[i + 1] = Math.round(d[i + 1] * t + 255 * (1 - t));
-      d[i + 2] = Math.round(d[i + 2] * t + 255 * (1 - t));
+      if (!opaque) {
+        d[i] = 0;
+        d[i + 1] = 0;
+        d[i + 2] = 0;
+      }
       d[i + 3] = 255;
     }
   }
