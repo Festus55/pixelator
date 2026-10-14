@@ -5,6 +5,12 @@ image. Pixelation is the only required transformation — no color filters or
 palettes. An optional retro dithering texture is available but off by
 default.
 
+## Fork adjustments
+
+[] Background-less aware behavior, allowing to keep a PNG without any background,
+   and not letting it affect the actual color tuning, with its dedicated toggle.
+[] Dynamic resizing of the pixel slider, allowing to decide how bigger the pixels 
+   can be.
 ## How it works
 
 1. Load a photo (file picker, drag-and-drop, or paste).

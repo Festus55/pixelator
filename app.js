@@ -12,6 +12,14 @@ const BAYER_4X4 = [
   [15, 7, 13, 5],
 ];
 
+const ALPHA_THRESHOLD = 128;   // mean alpha < threshold -> transparent
+
+// dynamic slider parameters
+const GROW_ZONE = 0.8;    
+const GROW_FACTOR = 1.5;  
+const SHRINK_ZONE = 0.3;   
+const SHRINK_FACTOR = 0.6; 
+
 // --- DOM references -----------------------------------------------------
 const dropZone = document.getElementById("drop-zone");
 const fileInput = document.getElementById("file-input");
@@ -44,6 +52,12 @@ const sourceCtx = sourceCanvas.getContext("2d");
 // integer scale to fit the screen, but the download is always full-res.
 const fullCanvas = document.createElement("canvas");
 const fullCtx = fullCanvas.getContext("2d");
+
+const keepAlphaToggle = document.getElementById("keep-alpha");
+const SLIDER_MIN = Number(pixelSizeInput.min) || 1;
+const BASE_MAX = Number(pixelSizeInput.max) || 32;
+
+let sourceHasAlpha = false;
 
 let currentFileBaseName = "pixelated";
 let sourceImageData = null; // cached full-res pixel data of the loaded image
@@ -78,6 +92,18 @@ async function loadFile(file) {
   bitmap.close();
   sourceImageData = sourceCtx.getImageData(0, 0, width, height);
 
+  sourceHasAlpha = false;
+  const px = sourceImageData.data;
+  for (let i = 3; i < px.length; i += 4) {
+    if (px[i] < 255) { sourceHasAlpha = true; break; }
+  }
+  if (keepAlphaToggle) {
+    keepAlphaToggle.checked = sourceHasAlpha;
+    keepAlphaToggle.disabled = !sourceHasAlpha;
+  }
+
+  pixelSizeInput.max = BASE_MAX;
+
   pixelSizeInput.value = DEFAULT_PIXEL_SIZE;
   pixelSizeValue.textContent = DEFAULT_PIXEL_SIZE;
   ditherToggle.checked = false;
@@ -95,6 +121,8 @@ async function loadFile(file) {
 // (getImageData), rather than relying on the browser's downscale filter —
 // this is what guarantees each block is a single flat color with no
 // bilinear blending at block edges.
+
+/* old compute, in favour of an alpha-aware mean count
 function computeBlockAverages(imageData, width, height, blocksX, blocksY) {
   const src = imageData.data;
 
@@ -138,6 +166,74 @@ function computeBlockAverages(imageData, width, height, blocksX, blocksY) {
   }
   return averaged;
 }
+*/
+function computeBlockAverages(imageData, width, height, blocksX, blocksY) {
+  const src = imageData.data;
+
+  const bxForX = new Int32Array(width);
+  for (let x = 0; x < width; x++) {
+    bxForX[x] = Math.min(blocksX - 1, Math.floor((x * blocksX) / width));
+  }
+  const byForY = new Int32Array(height);
+  for (let y = 0; y < height; y++) {
+    byForY[y] = Math.min(blocksY - 1, Math.floor((y * blocksY) / height));
+  }
+
+  const blockCount = blocksX * blocksY;
+  const sums = new Float64Array(blockCount * 4); // r*a, g*a, b*a, a
+  const counts = new Uint32Array(blockCount);
+
+  for (let y = 0; y < height; y++) {
+    const rowBlockBase = byForY[y] * blocksX;
+    const rowPixelBase = y * width;
+    for (let x = 0; x < width; x++) {
+      const block = rowBlockBase + bxForX[x];
+      const si = (rowPixelBase + x) * 4;
+      const di = block * 4;
+      const a = src[si + 3];
+      sums[di] += src[si] * a;
+      sums[di + 1] += src[si + 1] * a;
+      sums[di + 2] += src[si + 2] * a;
+      sums[di + 3] += a;
+      counts[block]++;
+    }
+  }
+
+  const averaged = new ImageData(blocksX, blocksY);
+  const dst = averaged.data;
+  for (let b = 0; b < blockCount; b++) {
+    const di = b * 4;
+    const sumA = sums[di + 3];
+    if (sumA > 0) {
+      dst[di] = Math.round(sums[di] / sumA);
+      dst[di + 1] = Math.round(sums[di + 1] / sumA);
+      dst[di + 2] = Math.round(sums[di + 2] / sumA);
+    }
+    dst[di + 3] = Math.round(sumA / (counts[b] || 1));
+  }
+  return averaged;
+}
+
+
+function finalizeAlpha(imageData, keepAlpha) {
+  const d = imageData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const a = d[i + 3];
+    if (keepAlpha) {
+      d[i + 3] = a >= ALPHA_THRESHOLD ? 255 : 0;
+    } else {
+      const t = a / 255;
+      d[i] = Math.round(d[i] * t + 255 * (1 - t));
+      d[i + 1] = Math.round(d[i + 1] * t + 255 * (1 - t));
+      d[i + 2] = Math.round(d[i + 2] * t + 255 * (1 - t));
+      d[i + 3] = 255;
+    }
+  }
+}
+
+function shouldKeepAlpha() {
+  return sourceHasAlpha && (!keepAlphaToggle || keepAlphaToggle.checked);
+}
 
 // Ordered (Bayer 4x4) dithering + posterization, applied per block using the
 // block's grid position. Mutates imageData in place.
@@ -168,6 +264,7 @@ function paintBlocks(ctx, blockData, blocksX, blocksY, scale) {
   for (let by = 0; by < blocksY; by++) {
     for (let bx = 0; bx < blocksX; bx++) {
       const i = (by * blocksX + bx) * 4;
+      if (data[i + 3] === 0) continue; //skips transparent blocks 
       ctx.fillStyle = `rgb(${data[i]}, ${data[i + 1]}, ${data[i + 2]})`;
       ctx.fillRect(bx * scale, by * scale, scale, scale);
     }
@@ -199,6 +296,8 @@ function pixelate() {
   const outputH = blocksY * pixelSize;
 
   const averages = computeBlockAverages(sourceImageData, width, height, blocksX, blocksY);
+
+  finalizeAlpha(averages, shouldKeepAlpha());
 
   if (ditherToggle.checked) {
     const numColors = Number(ditherColorsInput.value);
@@ -278,6 +377,27 @@ function hideStatus() {
   statusEl.textContent = "";
 }
 
+// --- dynamic pixel slider  --------------------------------------------------
+
+function adjustSliderRange() {
+  const value = Number(pixelSizeInput.value);
+  const max = Number(pixelSizeInput.max);
+  let newMax = max;
+
+  if (value > max * GROW_ZONE) {
+    newMax = Math.round(max * GROW_FACTOR);
+  } else if (value < max * SHRINK_ZONE && max > BASE_MAX) {
+    newMax = Math.max(BASE_MAX, Math.round(max * SHRINK_FACTOR));
+  }
+
+  if (newMax !== max) {
+    pixelSizeInput.max = newMax;
+    pixelSizeInput.value = value; // mantiene il valore corrente
+  }
+}
+
+
+
 // --- Event wiring ---------------------------------------------------------
 
 dropZone.addEventListener("click", () => fileInput.click());
@@ -329,6 +449,8 @@ pixelSizeInput.addEventListener("input", () => {
   pixelate();
 });
 
+pixelSizeInput.addEventListener("change", adjustSliderRange);
+
 ditherToggle.addEventListener("change", () => {
   updateDitherControlsEnabled();
   pixelate();
@@ -358,3 +480,6 @@ window.addEventListener("resize", () => {
     pixelate();
   });
 });
+
+
+keepAlphaToggle.addEventListener("change", pixelate);
