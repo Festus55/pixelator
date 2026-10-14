@@ -18,7 +18,7 @@ const ALPHA_THRESHOLD = 128;   // mean alpha < threshold -> transparent
 const GROW_ZONE = 0.8;    
 const GROW_FACTOR = 1.5;  
 const SHRINK_ZONE = 0.3;   
-const SHRINK_FACTOR = 0.6; 
+const SHRINK_FACTOR = 1.2; 
 
 // --- DOM references -----------------------------------------------------
 const dropZone = document.getElementById("drop-zone");
@@ -391,7 +391,7 @@ function adjustSliderRange() {
   if (value > max * GROW_ZONE) {
     newMax = Math.round(max * GROW_FACTOR);
   } else if (value < max * SHRINK_ZONE && max > BASE_MAX) {
-    newMax = Math.max(BASE_MAX, Math.round(max * SHRINK_FACTOR));
+    newMax = Math.max(BASE_MAX, Math.round(value * SHRINK_FACTOR));
   }
 
   if (newMax !== max) {
